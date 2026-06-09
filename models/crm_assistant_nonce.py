@@ -22,4 +22,6 @@ class CrmAssistantNonce(models.Model):
     @api.model
     def _gc_nonces(self):
         """Delete expired nonces. Call from cron job or inline."""
-        self.search([('expires_at', '<', fields.Datetime.now())]).unlink()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.search([('expires_at', '<', now)]).unlink()
