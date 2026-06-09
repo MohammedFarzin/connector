@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="crm_assistant.FloatingWidget" owl="1">
+        <div class="crm-assistant-widget">
+
+            <button
+                class="crm-assistant-toggle"
+                t-on-click="toggle"
+                title="CRM Assistant"
+            >
+                <i t-att-class="state.isOpen ? 'fa fa-times' : 'fa fa-comments'"/>
+            </button>
+
+            <div t-att-class="{
+                'crm-assistant-panel': true,
+                'crm-assistant-panel--open': state.isOpen
+            }">
+
+                <div class="crm-assistant-panel__header">
+                    <div class="crm-assistant-panel__header-info">
+                        <i class="fa fa-robot"/>
+                        <span>CRM Assistant</span>
+                    </div>
+                    <div class="crm-assistant-panel__header-actions">
+                        <button
+                            class="crm-assistant-panel__action-btn"
+                            t-on-click="onToggleHistory"
+                            t-att-title="state.showHistory ? 'Back to chat' : 'Chat history'"
+                        >
+                            <i t-att-class="state.showHistory ? 'fa fa-arrow-left' : 'fa fa-clock-o'"/>
+                        </button>
+                        <button
+                            class="crm-assistant-panel__action-btn"
+                            t-on-click="onResetSession"
+                            title="New conversation"
+                        >
+                            <i class="fa fa-plus"/>
+                        </button>
+                        <button
+                            class="crm-assistant-panel__action-btn"
+                            t-on-click="toggle"
+                            title="Close"
+                        >
+                            <i class="fa fa-times"/>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="crm-assistant-panel__messages" t-ref="messagesContainer">
+
+                    <!-- CHAT HISTORY SESSIONS PANEL -->
+                    <div t-if="state.showHistory" class="crm-assistant-history">
+                        <div class="crm-assistant-history__title">
+                            <i class="fa fa-history"/>
+                            <span>Previous Conversations</span>
+                        </div>
+
+                        <div t-if="state.sessionsLoading" class="crm-assistant-history__loading">
+                            <i class="fa fa-spinner fa-spin"/>
+                            <span>Loading...</span>
+                        </div>
+
+                        <div t-elif="state.sessions.length === 0" class="crm-assistant-history__empty">
+                            <i class="fa fa-inbox"/>
+                            <p>No previous conversations found.</p>
+                            <p class="crm-assistant-history__empty-hint">
+                                Start a conversation and it will appear here.
+                            </p>
+                        </div>
+
+                        <div t-else="" class="crm-assistant-history__list">
+                            <div
+                                t-foreach="state.sessions"
+                                t-as="session"
+                                t-key="session.session_id"
+                                class="crm-assistant-history__item"
+                                t-att-class="{
+                                    'crm-assistant-history__item': true,
+                                    'crm-assistant-history__item--active': session.session_id === this.sessionId
+                                }"
+                                t-on-click="() => onSelectSession(session.session_id)"
+                            >
+                                <div class="crm-assistant-history__item-icon">
+                                    <i class="fa fa-comment"/>
+                                </div>
+                                <div class="crm-assistant-history__item-content">
+                                    <div class="crm-assistant-history__item-preview">
+                                        <t t-esc="session.first_message or 'Empty conversation'"/>
+                                    </div>
+                                    <div class="crm-assistant-history__item-meta">
+                                        <span><t t-esc="session.message_count"/> message(s)</span>
+                                        <span>·</span>
+                                        <span t-esc="_formatSessionTime(session.updated_at)"/>
+                                    </div>
+                                </div>
+                                <div class="crm-assistant-history__item-arrow">
+                                    <i class="fa fa-chevron-right"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MAIN CHAT VIEW (hidden when history panel is open) -->
+                    <t t-if="!state.showHistory">
+
+                        <div t-if="state.restoring" class="crm-assistant-empty">
+                            <i class="fa fa-spinner fa-spin"/>
+                            <p>Restoring conversation...</p>
+                        </div>
+
+                        <div t-elif="state.messages.length === 0" class="crm-assistant-empty">
+                            <i class="fa fa-comments-o"/>
+                            <p>Ask me anything about your CRM!</p>
+                            <p class="crm-assistant-empty__hint">
+                                Try: "Create a lead for Acme Corp" or "Show my open leads"
+                            </p>
+                        </div>
+
+                        <t t-foreach="state.messages" t-as="msg" t-key="msg_index">
+                            <ChatMessage message="msg"/>
+                        </t>
+
+                        <div t-if="state.loading" class="chat-message chat-message--assistant">
+                            <div class="chat-message__avatar">
+                                <i class="fa fa-comments"/>
+                            </div>
+                            <div class="chat-message__content">
+                                <div class="chat-message__bubble chat-message__bubble--loading">
+                                    <span class="typing-dot">.</span>
+                                    <span class="typing-dot">.</span>
+                                    <span class="typing-dot">.</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </t>
+                </div>
+
+                <div class="crm-assistant-panel__input">
+                    <ChatInput
+                        loading="state.loading"
+                        disabled="state.restoring or state.showHistory"
+                        onSend.bind="onSendMessage"
+                    />
+                </div>
+
+            </div>
+        </div>
+    </t>
+
+</templates>

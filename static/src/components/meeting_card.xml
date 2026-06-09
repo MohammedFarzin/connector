@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="crm_assistant.MeetingCard" owl="1">
+        <div t-att-class="'meeting-card ' + statusClass">
+            <!-- Left accent bar is handled by CSS border-left -->
+
+            <div class="meeting-card__header">
+                <span class="meeting-card__subject" t-esc="props.meeting.name"/>
+                <span t-att-class="'meeting-card__badge meeting-card__badge--' + props.meeting.status">
+                    <t t-esc="statusLabel"/>
+                </span>
+            </div>
+
+            <div class="meeting-card__meta">
+                <div class="meeting-card__meta-item">
+                    <i class="fa fa-calendar"/>
+                    <span t-esc="props.meeting.time"/>
+                </div>
+                <div t-if="durationLabel" class="meeting-card__meta-item">
+                    <i class="fa fa-clock-o"/>
+                    <span t-esc="durationLabel"/>
+                </div>
+                <div t-if="props.meeting.user_name" class="meeting-card__meta-item">
+                    <i class="fa fa-user"/>
+                    <span t-esc="props.meeting.user_name"/>
+                </div>
+            </div>
+
+            <div t-if="props.meeting.lead_name" class="meeting-card__lead">
+                <i class="fa fa-briefcase"/>
+                <a t-att-href="props.meeting.lead_url" t-on-click.prevent="openLead" class="meeting-card__lead-link">
+                    <t t-esc="props.meeting.lead_name"/>
+                </a>
+            </div>
+
+            <div t-if="props.meeting.attendees and props.meeting.attendees.length" class="meeting-card__attendees">
+                <t t-foreach="props.meeting.attendees" t-as="attendee" t-key="attendee_index">
+                    <span class="meeting-card__attendee-chip" t-esc="attendee"/>
+                </t>
+            </div>
+        </div>
+    </t>
+
+</templates>

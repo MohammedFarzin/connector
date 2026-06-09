@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="crm_assistant.ChatMessage" owl="1">
+        <!-- Message bubble — role determines alignment and color -->
+        <div t-att-class="{
+            'chat-message': true,
+            'chat-message--user': props.message?.role === 'user',
+            'chat-message--assistant': props.message?.role === 'assistant'
+        }">
+            <!-- Avatar icon for assistant messages only -->
+            <div t-if="props.message?.role === 'assistant'" class="chat-message__avatar">
+                <i class="fa fa-comments"/>
+            </div>
+
+            <!-- Message content with bubble styling -->
+            <div class="chat-message__content">
+                <div t-att-class="{
+                    'chat-message__bubble': true,
+                    'chat-message__bubble--html': props.message?.isHtml
+                }">
+                    <t t-if="props.message?.isHtml" t-out="props.message?.html"/>
+                    <t t-else="" t-esc="props.message?.content"/>
+                </div>
+
+                <!-- Structured meeting cards -->
+                <t t-if="props.message?.structuredData?.display_type === 'meeting_list'">
+                    <div class="meeting-cards-container">
+                        <t t-foreach="props.message.structuredData.meetings" t-as="meeting" t-key="meeting.id">
+                            <MeetingCard meeting="meeting"/>
+                        </t>
+                    </div>
+                </t>
+
+                <!-- Team overview table -->
+                <t t-if="props.message?.structuredData?.display_type === 'team_overview'">
+                    <TeamOverviewTable data="props.message.structuredData"/>
+                </t>
+            </div>
+        </div>
+    </t>
+
+</templates>

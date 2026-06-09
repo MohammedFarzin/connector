@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+
+    <t t-name="crm_assistant.TeamOverviewTable" owl="1">
+        <div class="team-overview">
+            <!-- Header -->
+            <div class="team-overview__header">
+                <div class="team-overview__header-title">
+                    <i class="fa fa-users"/>
+                    <span t-esc="props.data.team_name"/>
+                </div>
+                <div class="team-overview__header-date">
+                    <i class="fa fa-calendar"/>
+                    <span t-esc="props.data.date"/>
+                </div>
+            </div>
+
+            <!-- Summary stats bar -->
+            <div class="team-overview__stats">
+                <div class="team-overview__stat">
+                    <span class="team-overview__stat-value" t-esc="props.data.total_meetings"/>
+                    <span class="team-overview__stat-label">Total Meetings</span>
+                </div>
+                <div class="team-overview__stat">
+                    <span class="team-overview__stat-value" t-esc="activeMembers"/>
+                    <span class="team-overview__stat-label">Active Members</span>
+                </div>
+                <div class="team-overview__stat">
+                    <span class="team-overview__stat-value" t-esc="busiestMember"/>
+                    <span class="team-overview__stat-label">Busiest Member</span>
+                </div>
+            </div>
+
+            <!-- Members table -->
+            <div class="team-overview__table-wrapper">
+                <table class="team-overview__table">
+                    <thead>
+                        <tr>
+                            <th>Member</th>
+                            <th>Meetings</th>
+                            <th>Next Meeting</th>
+                            <th>Lead</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <t t-foreach="props.data.members" t-as="member" t-key="member.user_id">
+                            <!-- Summary row (always visible) -->
+                            <tr t-att-class="{
+                                'team-overview__row': true,
+                                'team-overview__row--expanded': state.expandedRows[member.user_id]
+                            }"
+                                t-on-click="() => toggleRow(member.user_id)"
+                            >
+                                <td class="team-overview__cell-name">
+                                    <i t-att-class="state.expandedRows[member.user_id] ? 'fa fa-caret-down' : 'fa fa-caret-right'"/>
+                                    <span t-esc="member.name"/>
+                                </td>
+                                <td>
+                                    <span t-att-class="'team-overview__badge ' + getBadgeClass(member.meetings_count)">
+                                        <t t-esc="member.meetings_count"/>
+                                    </span>
+                                </td>
+                                <td class="team-overview__cell-time">
+                                    <t t-if="member.meetings.length" t-esc="member.meetings[0].time"/>
+                                    <t t-else="">—</t>
+                                </td>
+                                <td class="team-overview__cell-lead">
+                                    <t t-if="member.meetings.length" t-esc="member.meetings[0].lead or '—'"/>
+                                    <t t-else="">—</t>
+                                </td>
+                            </tr>
+
+                            <!-- Expanded detail rows -->
+                            <t t-if="state.expandedRows[member.user_id]">
+                                <tr t-foreach="member.meetings" t-as="meeting" t-key="meeting.id"
+                                    class="team-overview__detail-row">
+                                    <td/>
+                                    <td colspan="3">
+                                        <div class="team-overview__detail-item">
+                                            <span t-att-class="'team-overview__detail-status team-overview__detail-status--' + meeting.status"/>
+                                            <span class="team-overview__detail-time" t-esc="meeting.time"/>
+                                            <span class="team-overview__detail-subject" t-esc="meeting.subject"/>
+                                            <span t-if="meeting.lead" class="team-overview__detail-lead">
+                                                <i class="fa fa-briefcase"/>
+                                                <t t-esc="meeting.lead"/>
+                                            </span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </t>
+                        </t>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Empty state -->
+            <div t-if="!props.data.members or !props.data.members.length" class="team-overview__empty">
+                <i class="fa fa-calendar-o"/>
+                <p>No team members found.</p>
+            </div>
+            <div t-elif="props.data.total_meetings === 0" class="team-overview__empty">
+                <i class="fa fa-check-circle"/>
+                <p>No meetings scheduled for this date. 🎉</p>
+            </div>
+        </div>
+    </t>
+
+</templates>

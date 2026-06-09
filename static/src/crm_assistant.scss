@@ -1,0 +1,1002 @@
+/**
+ * CRM Assistant — Complete Stylesheet
+ *
+ * Design principles:
+ *   - Modern, clean, minimalist (inspired by Linear/Stripe aesthetic)
+ *   - Fixed bottom-right widget — works on every Odoo page
+ *   - Smooth CSS transitions for open/close animations
+ *   - Mobile responsive: full-width panel on small screens
+ *   - Dark header with light chat body for contrast
+ *   - BEM naming convention for maintainability
+ */
+
+// =========================================================================
+// CSS Custom Properties (design tokens)
+// =========================================================================
+:root {
+    --crm-assistant-primary: #1a73e8;
+    --crm-assistant-primary-hover: #1557b0;
+
+    --crm-assistant-bg: #ffffff;
+    --crm-assistant-header-bg: #1a73e8;
+    --crm-assistant-header-text: #ffffff;
+
+    --crm-assistant-text: #202124;
+    --crm-assistant-text-secondary: #5f6368;
+
+    --crm-assistant-border: #e0e0e0;
+
+    --crm-assistant-user-bubble: #1a73e8;
+    --crm-assistant-user-bubble-text: #ffffff;
+    --crm-assistant-assistant-bubble: #f1f3f4;
+    --crm-assistant-assistant-bubble-text: #202124;
+
+    --crm-assistant-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    --crm-assistant-radius: 16px;
+
+    --crm-assistant-transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    // Meeting scheduling design tokens
+    --crm-meeting-upcoming: #34a853;
+    --crm-meeting-inprogress: #4285f4;
+    --crm-meeting-past: #9aa0a6;
+    --crm-meeting-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    --crm-meeting-card-radius: 10px;
+}
+
+// =========================================================================
+// TOGGLE BUTTON
+// =========================================================================
+.crm-assistant-toggle {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--crm-assistant-primary);
+    color: white;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(26, 115, 232, 0.35);
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    transition: transform var(--crm-assistant-transition),
+                box-shadow var(--crm-assistant-transition);
+
+    &:hover {
+        transform: scale(1.08);
+        box-shadow: 0 6px 24px rgba(26, 115, 232, 0.45);
+    }
+
+    &:active {
+        transform: scale(0.95);
+    }
+}
+
+// =========================================================================
+// CHAT PANEL
+// =========================================================================
+.crm-assistant-panel {
+    position: fixed;
+    bottom: 96px;
+    right: 24px;
+    width: 380px;
+    height: 560px;
+    max-height: calc(100vh - 120px);
+    background: var(--crm-assistant-bg);
+    border-radius: var(--crm-assistant-radius);
+    box-shadow: var(--crm-assistant-shadow);
+    z-index: 1040;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    transform: translateY(16px) scale(0.95);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform var(--crm-assistant-transition),
+                opacity var(--crm-assistant-transition);
+
+    &--open {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    &__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: var(--crm-assistant-header-bg);
+        color: var(--crm-assistant-header-text);
+        flex-shrink: 0;
+    }
+
+    &__header-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 15px;
+
+        i {
+            font-size: 18px;
+        }
+    }
+
+    &__header-actions {
+        display: flex;
+        gap: 4px;
+    }
+
+    &__action-btn {
+        background: transparent;
+        border: none;
+        color: var(--crm-assistant-header-text);
+        cursor: pointer;
+        padding: 6px 10px;
+        border-radius: 8px;
+        font-size: 14px;
+        opacity: 0.85;
+        transition: opacity 0.2s, background 0.2s;
+
+        &:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.15);
+        }
+    }
+
+    &__messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+
+        &::-webkit-scrollbar {
+            width: 6px;
+        }
+        &::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        &::-webkit-scrollbar-thumb {
+            background: #dadce0;
+            border-radius: 3px;
+        }
+    }
+
+    &__input {
+        flex-shrink: 0;
+        border-top: 1px solid var(--crm-assistant-border);
+        padding: 8px;
+    }
+}
+
+// =========================================================================
+// EMPTY STATE
+// =========================================================================
+.crm-assistant-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--crm-assistant-text-secondary);
+    text-align: center;
+    padding: 24px;
+
+    i {
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.3;
+    }
+
+    p {
+        margin: 4px 0;
+        font-size: 15px;
+    }
+
+    &__hint {
+        font-size: 13px !important;
+        opacity: 0.7;
+        margin-top: 12px !important;
+    }
+}
+
+// =========================================================================
+// CHAT HISTORY PANEL
+// =========================================================================
+.crm-assistant-history {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+
+    &__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 0 16px 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--crm-assistant-text);
+        border-bottom: 1px solid var(--crm-assistant-border);
+        margin-bottom: 8px;
+        flex-shrink: 0;
+
+        i {
+            font-size: 16px;
+            color: var(--crm-assistant-primary);
+        }
+    }
+
+    &__loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 32px 0;
+        color: var(--crm-assistant-text-secondary);
+        font-size: 14px;
+
+        i {
+            font-size: 16px;
+        }
+    }
+
+    &__empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        color: var(--crm-assistant-text-secondary);
+        text-align: center;
+        padding: 32px 16px;
+
+        i {
+            font-size: 40px;
+            margin-bottom: 12px;
+            opacity: 0.3;
+        }
+
+        p {
+            margin: 4px 0;
+            font-size: 14px;
+        }
+
+        &-hint {
+            font-size: 12px !important;
+            opacity: 0.6;
+            margin-top: 8px !important;
+        }
+    }
+
+    &__list {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    &__item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 8px;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background 0.15s;
+
+        &:hover {
+            background: var(--crm-assistant-assistant-bubble);
+        }
+
+        &--active {
+            background: rgba(26, 115, 232, 0.08);
+            border: 1px solid rgba(26, 115, 232, 0.15);
+        }
+
+        &-icon {
+            flex-shrink: 0;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--crm-assistant-assistant-bubble);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            color: var(--crm-assistant-text-secondary);
+        }
+
+        &-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        &-preview {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--crm-assistant-text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 2px;
+        }
+
+        &-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: var(--crm-assistant-text-secondary);
+        }
+
+        &-arrow {
+            flex-shrink: 0;
+            color: var(--crm-assistant-text-secondary);
+            opacity: 0.4;
+            font-size: 12px;
+        }
+    }
+}
+
+// =========================================================================
+// MESSAGE BUBBLES
+// =========================================================================
+.chat-message {
+    display: flex;
+    gap: 8px;
+    max-width: 85%;
+
+    &--user {
+        align-self: flex-end;
+        flex-direction: row-reverse;
+
+        .chat-message__bubble {
+            background: var(--crm-assistant-user-bubble);
+            color: var(--crm-assistant-user-bubble-text);
+            border-radius: 18px 18px 4px 18px;
+        }
+    }
+
+    &--assistant {
+        align-self: flex-start;
+
+        .chat-message__bubble {
+            background: var(--crm-assistant-assistant-bubble);
+            color: var(--crm-assistant-assistant-bubble-text);
+            border-radius: 18px 18px 18px 4px;
+        }
+    }
+
+    &__avatar {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--crm-assistant-assistant-bubble);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        color: var(--crm-assistant-text-secondary);
+    }
+
+    &__content {
+        flex: 1;
+    }
+
+    &__bubble {
+        padding: 10px 16px;
+        font-size: 14px;
+        line-height: 1.5;
+        word-wrap: break-word;
+        white-space: pre-wrap;
+
+        &--html {
+            white-space: normal;
+
+            p {
+                margin: 0 0 10px 0;
+                &:last-child { margin-bottom: 0; }
+            }
+
+            h1, h2, h3, h4, h5, h6 {
+                margin: 14px 0 8px 0;
+                font-weight: 600;
+                line-height: 1.3;
+                color: inherit;
+            }
+            h1 { font-size: 1.35rem; }
+            h2 { font-size: 1.2rem; }
+            h3 { font-size: 1.1rem; }
+            h4 { font-size: 1.05rem; }
+            
+            strong, b {
+                font-weight: 600;
+            }
+
+            ul, ol {
+                margin: 8px 0;
+                padding-left: 20px;
+                
+                li {
+                    margin-bottom: 4px;
+                    &:last-child { margin-bottom: 0; }
+                }
+            }
+            ul { list-style-type: disc; }
+            ol { list-style-type: decimal; }
+
+            pre {
+                background: rgba(0, 0, 0, 0.05);
+                border-radius: 6px;
+                padding: 8px 12px;
+                margin: 8px 0;
+                overflow-x: auto;
+                
+                code {
+                    background: transparent;
+                    padding: 0;
+                    border-radius: 0;
+                    font-size: 12px;
+                    color: inherit;
+                }
+            }
+            code {
+                font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+                font-size: 0.9em;
+                background: rgba(0, 0, 0, 0.06);
+                padding: 2px 5px;
+                border-radius: 4px;
+                color: #e83e8c;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 12px 0;
+                font-size: 13px;
+                line-height: 1.4;
+                border-radius: 8px;
+                overflow: hidden;
+                border: 1px solid var(--crm-assistant-border);
+                background: var(--crm-assistant-bg);
+
+                th, td {
+                    padding: 8px 10px;
+                    border: 1px solid var(--crm-assistant-border);
+                }
+
+                th {
+                    font-weight: 600;
+                    background-color: rgba(0, 0, 0, 0.04);
+                    text-align: left;
+                    border-bottom: 2px solid var(--crm-assistant-border);
+                }
+
+                tr:nth-child(even) {
+                    background-color: rgba(0, 0, 0, 0.02);
+                }
+            }
+
+            hr {
+                border: 0;
+                height: 1px;
+                background: var(--crm-assistant-border);
+                margin: 16px 0;
+            }
+
+            a {
+                color: var(--crm-assistant-primary);
+                text-decoration: underline;
+                
+                &:hover {
+                    color: var(--crm-assistant-primary-hover);
+                }
+            }
+        }
+
+        &--loading {
+            display: flex;
+            gap: 4px;
+            padding: 10px 20px;
+
+            .typing-dot {
+                animation: typingBounce 1.4s infinite ease-in-out;
+                font-size: 24px;
+                line-height: 1;
+
+                &:nth-child(1) { animation-delay: 0s; }
+                &:nth-child(2) { animation-delay: 0.2s; }
+                &:nth-child(3) { animation-delay: 0.4s; }
+            }
+        }
+    }
+}
+
+@keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-6px); opacity: 1; }
+}
+
+// =========================================================================
+// CHAT INPUT AREA
+// =========================================================================
+.chat-input {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    padding: 4px;
+
+    &__textarea {
+        flex: 1;
+        border: none;
+        background: transparent;
+        resize: none;
+        padding: 8px 12px;
+        font-size: 14px;
+        line-height: 1.5;
+        max-height: 120px;
+        outline: none;
+        font-family: inherit;
+        color: var(--crm-assistant-text);
+
+        &::placeholder {
+            color: var(--crm-assistant-text-secondary);
+            opacity: 0.6;
+        }
+
+        &:disabled {
+            opacity: 0.5;
+        }
+    }
+
+    &__send-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: var(--crm-assistant-primary);
+        color: white;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        flex-shrink: 0;
+        transition: background 0.2s, transform 0.2s;
+
+        &:hover:not(:disabled) {
+            background: var(--crm-assistant-primary-hover);
+            transform: scale(1.05);
+        }
+
+        &:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+    }
+}
+
+// =========================================================================
+// MOBILE RESPONSIVE
+// =========================================================================
+@media (max-width: 480px) {
+    .crm-assistant-panel {
+        width: calc(100vw - 32px);
+        right: 16px;
+        left: 16px;
+        bottom: 88px;
+        height: calc(100vh - 120px);
+        border-radius: 20px 20px 0 0;
+    }
+
+    .crm-assistant-toggle {
+        bottom: 16px;
+        right: 16px;
+        width: 52px;
+        height: 52px;
+    }
+}
+
+// =========================================================================
+// MEETING CARDS
+// =========================================================================
+.meeting-cards-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.meeting-card {
+    background: var(--crm-assistant-bg);
+    border: 1px solid var(--crm-assistant-border);
+    border-radius: var(--crm-meeting-card-radius);
+    box-shadow: var(--crm-meeting-card-shadow);
+    padding: 12px 14px;
+    border-left: 4px solid transparent;
+    transition: box-shadow 0.2s, transform 0.2s;
+
+    &:hover {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+        transform: translateY(-1px);
+    }
+
+    &--upcoming {
+        border-left-color: var(--crm-meeting-upcoming);
+    }
+    &--in-progress {
+        border-left-color: var(--crm-meeting-inprogress);
+        background: rgba(66, 133, 244, 0.03);
+    }
+    &--past {
+        border-left-color: var(--crm-meeting-past);
+        opacity: 0.75;
+    }
+
+    &__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+    }
+
+    &__subject {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--crm-assistant-text);
+        flex: 1;
+        margin-right: 8px;
+    }
+
+    &__badge {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+
+        &--upcoming {
+            background: rgba(52, 168, 83, 0.12);
+            color: var(--crm-meeting-upcoming);
+        }
+        &--in-progress {
+            background: rgba(66, 133, 244, 0.12);
+            color: var(--crm-meeting-inprogress);
+        }
+        &--past {
+            background: rgba(154, 160, 166, 0.12);
+            color: var(--crm-meeting-past);
+        }
+    }
+
+    &__meta {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 6px;
+        flex-wrap: wrap;
+    }
+
+    &__meta-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--crm-assistant-text-secondary);
+
+        i {
+            font-size: 12px;
+            opacity: 0.7;
+            width: 14px;
+            text-align: center;
+        }
+    }
+
+    &__lead {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-bottom: 6px;
+        font-size: 12px;
+        color: var(--crm-assistant-primary);
+
+        i {
+            font-size: 11px;
+        }
+    }
+
+    &__lead-link {
+        color: var(--crm-assistant-primary);
+        text-decoration: none;
+        font-weight: 500;
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+
+    &__attendees {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    &__attendee-chip {
+        font-size: 11px;
+        background: var(--crm-assistant-assistant-bubble);
+        color: var(--crm-assistant-text-secondary);
+        padding: 2px 8px;
+        border-radius: 12px;
+    }
+}
+
+// =========================================================================
+// TEAM OVERVIEW TABLE
+// =========================================================================
+.team-overview {
+    margin-top: 12px;
+    background: var(--crm-assistant-bg);
+    border: 1px solid var(--crm-assistant-border);
+    border-radius: var(--crm-meeting-card-radius);
+    overflow: hidden;
+    box-shadow: var(--crm-meeting-card-shadow);
+
+    &__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        background: var(--crm-assistant-header-bg);
+        color: var(--crm-assistant-header-text);
+    }
+
+    &__header-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 14px;
+    }
+
+    &__header-date {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        opacity: 0.9;
+    }
+
+    &__stats {
+        display: flex;
+        gap: 0;
+        border-bottom: 1px solid var(--crm-assistant-border);
+    }
+
+    &__stat {
+        flex: 1;
+        padding: 12px 10px;
+        text-align: center;
+
+        &:not(:last-child) {
+            border-right: 1px solid var(--crm-assistant-border);
+        }
+    }
+
+    &__stat-value {
+        display: block;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--crm-assistant-primary);
+    }
+
+    &__stat-label {
+        display: block;
+        font-size: 11px;
+        color: var(--crm-assistant-text-secondary);
+        margin-top: 2px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    &__table-wrapper {
+        overflow-x: auto;
+    }
+
+    &__table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+
+        th {
+            background: rgba(0, 0, 0, 0.03);
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            color: var(--crm-assistant-text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-bottom: 2px solid var(--crm-assistant-border);
+        }
+
+        td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--crm-assistant-border);
+        }
+    }
+
+    &__row {
+        cursor: pointer;
+        transition: background 0.15s;
+
+        &:hover {
+            background: rgba(26, 115, 232, 0.04);
+        }
+
+        &--expanded {
+            background: rgba(26, 115, 232, 0.06);
+        }
+    }
+
+    &__cell-name {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 500;
+
+        i {
+            font-size: 12px;
+            width: 14px;
+            color: var(--crm-assistant-text-secondary);
+        }
+    }
+
+    &__cell-time,
+    &__cell-lead {
+        color: var(--crm-assistant-text-secondary);
+        font-size: 12px;
+    }
+
+    &__badge {
+        display: inline-block;
+        min-width: 24px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        text-align: center;
+
+        &--none {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--crm-assistant-text-secondary);
+        }
+        &--light {
+            background: rgba(52, 168, 83, 0.12);
+            color: var(--crm-meeting-upcoming);
+        }
+        &--moderate {
+            background: rgba(251, 188, 4, 0.15);
+            color: #e37400;
+        }
+        &--busy {
+            background: rgba(234, 67, 53, 0.12);
+            color: #ea4335;
+        }
+    }
+
+    &__detail-row td {
+        padding: 0;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+        background: rgba(0, 0, 0, 0.01);
+    }
+
+    &__detail-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px 6px 28px;
+        font-size: 12px;
+    }
+
+    &__detail-status {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+
+        &--upcoming {
+            background: var(--crm-meeting-upcoming);
+        }
+        &--in-progress {
+            background: var(--crm-meeting-inprogress);
+            animation: pulse-dot 2s infinite;
+        }
+        &--past {
+            background: var(--crm-meeting-past);
+        }
+    }
+
+    &__detail-time {
+        font-weight: 600;
+        color: var(--crm-assistant-text);
+        min-width: 70px;
+    }
+
+    &__detail-subject {
+        flex: 1;
+    }
+
+    &__detail-lead {
+        color: var(--crm-assistant-text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    &__empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 32px 16px;
+        color: var(--crm-assistant-text-secondary);
+
+        i {
+            font-size: 32px;
+            margin-bottom: 8px;
+            opacity: 0.3;
+        }
+
+        p {
+            font-size: 13px;
+            margin: 0;
+        }
+    }
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+// =========================================================================
+// MOBILE RESPONSIVE — Meeting Cards & Team Overview
+// =========================================================================
+@media (max-width: 480px) {
+    .meeting-card__meta {
+        gap: 10px;
+    }
+
+    .team-overview {
+        &__stats {
+            flex-wrap: wrap;
+        }
+        &__stat {
+            flex: 1 1 50%;
+            &:nth-child(2) {
+                border-right: none;
+            }
+        }
+        &__table th:nth-child(3),
+        &__table td:nth-child(3),
+        &__table th:nth-child(4),
+        &__table td:nth-child(4) {
+            display: none;
+        }
+    }
+}
