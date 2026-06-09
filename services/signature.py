@@ -27,7 +27,7 @@ def _get_shared_secret():
     ) or None
 
 
-def _check_and_record_nonce(nonce, now):
+def _check_and_record_nonce(nonce, now_epoch):
     """Check nonce uniqueness using persistent DB storage."""
     Nonce = request.env['crm.assistant.nonce'].sudo()
     # First garbage-collect expired nonces
@@ -36,9 +36,9 @@ def _check_and_record_nonce(nonce, now):
     existing = Nonce.search([('nonce', '=', nonce)], limit=1)
     if existing:
         return False
-    # Record this nonce with TTL
-    from datetime import datetime, timedelta
-    expires = datetime.now() + timedelta(seconds=MAX_PAYLOAD_AGE_SECONDS)
+    # Record this nonce with TTL (Odoo Datetime fields expect UTC-naive)
+    from datetime import datetime, timedelta, timezone
+    expires = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=MAX_PAYLOAD_AGE_SECONDS)
     Nonce.create({'nonce': nonce, 'expires_at': expires})
     return True
 

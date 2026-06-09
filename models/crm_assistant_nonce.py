@@ -3,7 +3,6 @@
 
 Survives connector restarts. Nonces auto-expire after TTL.
 """
-
 from odoo import fields, models, api
 
 
