@@ -123,8 +123,9 @@ class CrmAssistantConnectorController(http.Controller):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-        except httpx.RequestError as e:
-            _logger.error("Gateway unreachable: %s", e)
+        except (httpx.HTTPError, json.JSONDecodeError) as e:
+            status_code = getattr(getattr(e, 'response', None), 'status_code', 'unknown') if isinstance(e, httpx.HTTPError) else 'parse_error'
+            _logger.error("Gateway error (HTTP %s): %s", status_code, e)
             return {'error': 'AI service temporarily unavailable. Please try again.'}
 
         # Process execution plans (FIXED: iterate list, verify HMAC per plan)
