@@ -22,6 +22,7 @@ from odoo import http
 from odoo.http import request
 
 from ..services.signature import verify_signature
+from ..services.signing import sign_request
 from ..services.call_kw_executor import execute_instruction_set
 from ..services.stream_relay import start_relay
 
@@ -44,6 +45,22 @@ def _get_secret():
 
 def _get_gateway_url():
     return _get_config('gateway_url', '')
+
+
+def _get_client_id():
+    """Return a stable client identifier for HMAC signing.
+
+    Uses the first 8 chars of the Odoo database UUID as a stable,
+    unique-per-installation client ID. Falls back to 'default' if
+    the database UUID can't be read.
+    """
+    try:
+        db_uuid = request.env['ir.config_parameter'].sudo().get_param('database.uuid', '')
+        if db_uuid:
+            return db_uuid[:8]
+    except Exception:
+        pass
+    return 'default'
 
 
 # =========================================================================
@@ -76,20 +93,33 @@ class CrmAssistantConnectorController(http.Controller):
         # Build session history
         session_id, session_history = _get_session(session_id, request.env.uid)
 
-        # Forward to gateway
+        # Forward to gateway (HMAC-signed + Bearer token)
+        client_id = _get_client_id()
+        payload = {
+            'message': message,
+            'session_id': session_id,
+            'user_id': request.env.uid,
+        }
+        # Serialize payload to JSON FIRST, then sign the exact bytes
+        # that will go over the wire. This guarantees the HMAC canonical
+        # matches the raw body the gateway reads, regardless of httpx's
+        # internal JSON serializer.
+        import json as _json
+        body_str = _json.dumps(payload, sort_keys=True)
+        hmac_headers = sign_request(secret, canonical=body_str, client_id=client_id)
+
         try:
+            import base64
+            safe_secret = base64.b64encode(secret.encode()).decode()
             with httpx.Client(timeout=30.0) as client:
                 resp = client.post(
                     f"{gateway_url}/api/v1/message",
                     headers={
-                        'Authorization': f'Bearer {secret}',
+                        'Authorization': f'Bearer {safe_secret}',
                         'Content-Type': 'application/json',
+                        **hmac_headers,
                     },
-                    json={
-                        'message': message,
-                        'session_id': session_id,
-                        'user_id': request.env.uid,
-                    },
+                    content=body_str,
                 )
                 resp.raise_for_status()
                 data = resp.json()

@@ -22,5 +22,5 @@ Open-sourced under MIT — safe to distribute freely.
     'installable': True,
     'application': False,
     'auto_install': False,
-    'license': 'MIT',
+    'license': 'Other OSI approved licence',
 }
