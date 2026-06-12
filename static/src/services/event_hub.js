@@ -85,7 +85,15 @@ class EventHub {
         const busService = this.env.services?.bus_service;
         if (busService) {
             busService.addChannel(this._channel);
-            busService.addEventListener("notification", this._onBusNotification.bind(this));
+            // Use subscribe() instead of addEventListener() because
+            // "notification" is in Odoo's INTERNAL_EVENTS exclusion set
+            // and will never fire via addEventListener.
+            // Store the callback reference for later unsubscribe().
+            this._busCallback = this._onRecordChangedNotification.bind(this);
+            busService.subscribe(
+                "crm_assistant_record_changed",
+                this._busCallback
+            );
         } else {
             // Fallback: use raw browser fetch for longpolling
             console.warn("[EventHub] Bus service not available — using raw longpoll fallback");
@@ -123,7 +131,12 @@ class EventHub {
                         last = notifications[notifications.length - 1]?.id || last;
                         for (const notif of notifications) {
                             if (notif.channel === this._channel) {
-                                this._handleNotification(notif.message);
+                                // Wrap raw payload with event field for _handleNotification
+                                this._handleNotification({
+                                    event: "record_changed",
+                                    data: notif.message,
+                                    timestamp: new Date().toISOString(),
+                                });
                             }
                         }
                     }
@@ -140,19 +153,30 @@ class EventHub {
     }
 
     /**
-     * Handle a notification from the Odoo bus.
+     * Handle a crm_assistant_record_changed notification from the bus.
      *
-     * @param {Object} event - bus event containing channel + message
+     * Called by busService.subscribe() when the backend dispatches
+     * a bus notification on the crm_assistant_{userId} channel.
+     *
+     * @param {Object} payload - { model, record_ids, method }
+     * @param {Object} meta - { id: notificationId }
      */
-    _onBusNotification(event) {
-        const notification = event.detail;
-        if (Array.isArray(notification)) {
-            for (const notif of notification) {
-                if (notif.channel === this._channel) {
-                    this._handleNotification(notif.message);
-                }
-            }
-        }
+    _onRecordChangedNotification(payload, meta) {
+        if (!payload || !payload.model) return;
+
+        console.debug(
+            "[EventHub] Received record change notification:",
+            payload.model,
+            payload.method,
+            payload.record_ids
+        );
+
+        // Dispatch to subscribers registered via eventHub.on()
+        this._handleNotification({
+            event: "record_changed",
+            data: payload,
+            timestamp: new Date().toISOString(),
+        });
     }
 
     /**
@@ -196,7 +220,8 @@ class EventHub {
     }
 
     /**
-     * Cleanup: remove all subscribers and stop polling.
+     * Cleanup: remove all subscribers, stop polling, and
+     * unsubscribe from the bus service to prevent memory leaks.
      */
     destroy() {
         this._subscribers.clear();
@@ -204,6 +229,17 @@ class EventHub {
         if (this._pollFallbackTimer) {
             clearTimeout(this._pollFallbackTimer);
             this._pollFallbackTimer = null;
+        }
+        // Clean up bus subscription to prevent zombie callbacks
+        if (this._busCallback) {
+            const busService = this.env.services?.bus_service;
+            if (busService) {
+                busService.unsubscribe(
+                    "crm_assistant_record_changed",
+                    this._busCallback
+                );
+            }
+            this._busCallback = null;
         }
     }
 }

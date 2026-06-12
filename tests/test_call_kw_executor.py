@@ -1109,3 +1109,207 @@ class TestAdditionalBugs(common.TransactionCase):
             result = execute_instruction(self.env, instruction)
         self.assertTrue(result['success'],
                        f"Production crash reproduction should now succeed: {result.get('error')}")
+
+
+class TestBusNotificationDispatch(common.TransactionCase):
+    """Test that bus notifications are dispatched after write/create/unlink.
+
+    For direct execute_instruction() calls (used by /execute endpoint),
+    notifications are returned via the _notification key in the result and
+    dispatched by the caller (execute_instruction_set). For execute_instruction_set()
+    calls (actual production path), notifications are dispatched to bus.bus.
+    """
+
+    def _get_bus_values(self):
+        """Return queued bus.bus notification values from precommit data."""
+        return self.env.cr.precommit.data.get("bus.bus.values", [])
+
+    def _assert_result_has_notification(self, result, model, method):
+        """Assert the result contains a _notification for the given model/method."""
+        notification = result.get('_notification')
+        self.assertIsNotNone(
+            notification,
+            f"Expected _notification in result for {model}.{method}"
+        )
+        self.assertEqual(notification['model'], model)
+        self.assertEqual(notification['method'], method)
+        return notification
+
+    def _assert_bus_notification(self, model, method):
+        """Assert the last bus.bus notification matches expected model and method."""
+        values = self._get_bus_values()
+        self.assertTrue(values, f"Expected bus notification for {model}.{method}, got none")
+        last = values[-1]
+        message = json.loads(last['message'])
+        self.assertEqual(message['type'], 'crm_assistant_record_changed')
+        self.assertEqual(message['payload']['model'], model)
+        self.assertEqual(message['payload']['method'], method)
+        return message
+
+    def test_notification_returned_after_write(self):
+        """A write instruction should include _notification in result."""
+        lead = self.env['crm.lead'].create({'name': 'Bus Notify Lead', 'type': 'lead'})
+        instruction = {
+            'model': 'crm.lead',
+            'method': 'write',
+            'ids': [lead.id],
+            'args': [{'name': 'Bus Notify Renamed'}],
+        }
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction(self.env, instruction)
+        self.assertTrue(result['success'])
+        self._assert_result_has_notification(result, 'crm.lead', 'write')
+
+    def test_notification_returned_after_create(self):
+        """A create instruction should include _notification in result."""
+        instruction = {
+            'model': 'crm.lead',
+            'method': 'create',
+            'args': [{'name': 'Bus Notify Created', 'type': 'lead'}],
+        }
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction(self.env, instruction)
+        self.assertTrue(result['success'])
+        self._assert_result_has_notification(result, 'crm.lead', 'create')
+
+    def test_notification_returned_after_unlink(self):
+        """An unlink instruction should include _notification in result."""
+        event = self.env['calendar.event'].create({
+            'name': 'Bus Notify Event',
+            'start': '2026-06-12 10:00:00',
+            'stop': '2026-06-12 11:00:00',
+        })
+        instruction = {
+            'model': 'calendar.event',
+            'method': 'unlink',
+            'ids': [event.id],
+        }
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction(self.env, instruction)
+        self.assertTrue(result['success'])
+        self._assert_result_has_notification(result, 'calendar.event', 'unlink')
+
+    def test_no_notification_for_search_read(self):
+        """A read-only operation should NOT include _notification in result."""
+        instruction = {
+            'model': 'crm.lead',
+            'method': 'search_read',
+            'args': [[['type', '=', 'lead']]],
+        }
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction(self.env, instruction)
+        self.assertTrue(result['success'])
+        self.assertIsNone(
+            result.get('_notification'),
+            "No _notification should be returned for search_read"
+        )
+
+    def test_no_notification_for_failed_write(self):
+        """A failed write should NOT include _notification in result."""
+        instruction = {
+            'model': 'crm.lead',
+            'method': 'write',
+            'ids': [999999],  # non-existent ID
+            'args': [{'name': 'Should Fail'}],
+        }
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction(self.env, instruction)
+        self.assertFalse(result['success'])
+        self.assertNotIn('_notification', result,
+                         "No _notification should be returned for failed write")
+
+    def test_notification_channel_exact_match(self):
+        """Verify bus notification channel via execute_instruction_set (production path)."""
+        lead = self.env['crm.lead'].create({'name': 'Channel Test', 'type': 'lead'})
+        instruction_set = {
+            'trace_id': 'test-channel',
+            'transaction': False,
+            'steps': [{
+                'id': 'write_step',
+                'model': 'crm.lead',
+                'method': 'write',
+                'ids': [lead.id],
+                'args': [{'name': 'Channel Test Renamed'}],
+            }],
+        }
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction_set(self.env, instruction_set)
+        self.assertTrue(result['success'])
+        values = self._get_bus_values()
+        self.assertTrue(values, "Expected at least one bus notification")
+        last = values[-1]
+        channel = json.loads(last['channel'])
+        self.assertIsInstance(channel, list)
+        expected_channel = f'crm_assistant_{self.env.uid}'
+        self.assertEqual(channel[1], expected_channel,
+                         f"Channel should be {expected_channel}, got {channel[1]}")
+
+    def test_transactional_set_batches_notifications(self):
+        """Transactional sets should batch notifications and dispatch after commit."""
+        stage = self.env['crm.stage'].search([], limit=1)
+        self.assertTrue(stage, "Need at least one CRM stage")
+        lead = self.env['crm.lead'].create({'name': 'Transactional Lead', 'type': 'lead'})
+
+        instruction_set = {
+            'trace_id': 'test-txn-batch',
+            'transaction': True,
+            'steps': [
+                {
+                    'id': 'rename',
+                    'model': 'crm.lead',
+                    'method': 'write',
+                    'ids': [lead.id],
+                    'args': [{'name': 'Transactional Renamed'}],
+                },
+                {
+                    'id': 'move_stage',
+                    'model': 'crm.lead',
+                    'method': 'write',
+                    'ids': [lead.id],
+                    'args': [{'stage_id': stage.id}],
+                },
+            ],
+        }
+        values_before = len(self._get_bus_values())
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction_set(self.env, instruction_set)
+        self.assertTrue(result['success'], f"Instruction set failed: {result.get('error_step')}")
+        values_after = self._get_bus_values()
+        self.assertEqual(
+            len(values_after) - values_before, 2,
+            "Transactional set should dispatch exactly 2 notifications after commit"
+        )
+
+    def test_transactional_set_no_notification_on_rollback(self):
+        """Rolled-back transactional sets should NOT dispatch notifications."""
+        lead = self.env['crm.lead'].create({'name': 'Rollback Lead', 'type': 'lead'})
+
+        instruction_set = {
+            'trace_id': 'test-txn-rollback',
+            'transaction': True,
+            'steps': [
+                {
+                    'id': 'rename',
+                    'model': 'crm.lead',
+                    'method': 'write',
+                    'ids': [lead.id],
+                    'args': [{'name': 'Should Rollback'}],
+                },
+                {
+                    'id': 'fail',
+                    'model': 'crm.lead',
+                    'method': 'write',
+                    'ids': [999999],  # non-existent → triggers rollback
+                    'args': [{'name': 'This Fails'}],
+                },
+            ],
+        }
+        values_before = len(self._get_bus_values())
+        with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
+            result = execute_instruction_set(self.env, instruction_set)
+        self.assertFalse(result['success'])
+        values_after = self._get_bus_values()
+        self.assertEqual(
+            len(values_after), values_before,
+            "Rolled-back transactional set should dispatch zero notifications",
+        )

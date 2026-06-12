@@ -209,8 +209,17 @@ def execute_instruction(env, instruction):
         method = getattr(model, method_name)
         result = method(*args, **kwargs)
 
-        # --- STEP 8: Serialize ---
-        return {'success': True, 'result': serialize_result(result)}
+        # --- STEP 8: Collect notification data for mutating operations ---
+        notification = _build_notification_data(
+            env, model_name, method_name, record_ids
+        )
+
+        # --- STEP 9: Serialize ---
+        serialized = serialize_result(result)
+        response = {'success': True, 'result': serialized}
+        if notification:
+            response['_notification'] = notification
+        return response
 
     except KeyError:
         return {'success': False, 'error': f"Unknown model: {model_name}"}
@@ -236,6 +245,7 @@ def execute_instruction_set(env, instruction_set):
 
     captured = {}
     results = []
+    pending_notifications = []
     error_step = None
 
     if transactional:
@@ -276,11 +286,23 @@ def execute_instruction_set(env, instruction_set):
 
             results.append({'step': step_id, 'result': result['result']})
 
+            # Collect notification data (dispatch deferred for transactional sets)
+            notification = result.get('_notification')
+            if notification:
+                if transactional:
+                    pending_notifications.append(notification)
+                else:
+                    _dispatch_notification(env, notification)
+
         if error_step and transactional:
             env.cr.execute('ROLLBACK TO SAVEPOINT crm_assistant_instruction_set')
             _logger.warning("Instruction set %s rolled back at %s", trace_id, error_step)
+            pending_notifications = []  # discard — data was rolled back
         elif transactional:
             env.cr.execute('RELEASE SAVEPOINT crm_assistant_instruction_set')
+            # Now safe to dispatch — transaction committed
+            for notification in pending_notifications:
+                _dispatch_notification(env, notification)
 
         return {'success': error_step is None, 'trace_id': trace_id, 'results': results, 'error_step': error_step}
 
@@ -292,6 +314,45 @@ def execute_instruction_set(env, instruction_set):
                 pass
         _logger.exception("Fatal instruction set error: %s", trace_id)
         return {'success': False, 'trace_id': trace_id, 'error': str(e)}
+
+
+def _build_notification_data(env, model_name, method_name, record_ids):
+    """Build notification payload for successful write/create/unlink.
+
+    Returns a dict with model, record_ids, and method if the operation
+    is a mutating write — otherwise returns None. The caller is responsible
+    for dispatching at the right time (e.g. after transaction commit).
+    """
+    if method_name not in ('write', 'create', 'unlink'):
+        return None
+    return {
+        'model': model_name,
+        'record_ids': list(record_ids) if isinstance(record_ids, (list, tuple)) else [],
+        'method': method_name,
+    }
+
+
+def _dispatch_notification(env, notification):
+    """Dispatch a single bus notification for a record change.
+
+    Sends on the crm_assistant_{userId} channel. If the bus module is
+    not installed or dispatch fails, logs a warning but does not raise.
+    """
+    try:
+        env['bus.bus']._sendone(
+            f'crm_assistant_{env.uid}',
+            'crm_assistant_record_changed',
+            notification,
+        )
+        _logger.debug(
+            "Bus notification dispatched: %s.%s on channel crm_assistant_%s",
+            notification['model'], notification['method'], env.uid,
+        )
+    except Exception as e:
+        _logger.warning(
+            "Failed to dispatch bus notification for %s.%s: %s",
+            notification['model'], notification['method'], e,
+        )
 
 
 def _resolve_references(data, captured):

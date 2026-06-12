@@ -49,6 +49,18 @@ export class FloatingWidget extends Component {
 
         // Subscribe to real-time event hub
         this._setupEventHub();
+
+        // Cleanup debounce timer and event subscriptions on destroy
+        onWillDestroy(() => {
+            if (this._reloadTimer) {
+                clearTimeout(this._reloadTimer);
+                this._reloadTimer = null;
+            }
+            if (this._eventHub && this._recordChangedHandler) {
+                this._eventHub.off("record_changed", this._recordChangedHandler);
+                this._recordChangedHandler = null;
+            }
+        });
     }
 
     /**
@@ -375,6 +387,9 @@ export class FloatingWidget extends Component {
                 this._eventHub.on("meeting_rescheduled", this._onMeetingRescheduled.bind(this));
                 this._eventHub.on("lead_stage_changed", this._onLeadStageChanged.bind(this));
                 this._eventHub.on("lead_status_changed", this._onLeadStatusChanged.bind(this));
+                // Record change → auto-refresh Odoo views
+                this._recordChangedHandler = this._onRecordChanged.bind(this);
+                this._eventHub.on("record_changed", this._recordChangedHandler);
             }
         } catch (_e) {
             // EventHub service may not be available (e.g. bus not installed)
@@ -430,6 +445,35 @@ export class FloatingWidget extends Component {
 
     _onLeadStatusChanged(data) {
         this._updateLeadStatusInMessages(data);
+    }
+
+    /**
+     * Handle record_changed event from the EventHub.
+     *
+     * Triggered when the backend dispatches a bus notification after a
+     * successful write/create/unlink via the chat. Uses a 1.5s debounce
+     * to coalesce multiple notifications from multi-step instruction sets
+     * into a single page reload.
+     *
+     * @param {Object} data - { model, record_ids, method }
+     */
+    _onRecordChanged(data) {
+        if (!data || !data.model) return;
+
+        console.debug(
+            "[ChatWidget] Record changed:", data.model, data.method,
+            "— scheduling page reload"
+        );
+
+        // Debounce: clear any pending reload and set a new one.
+        // Multiple notifications in rapid succession → single reload.
+        if (this._reloadTimer) {
+            clearTimeout(this._reloadTimer);
+        }
+        this._reloadTimer = setTimeout(() => {
+            console.debug("[ChatWidget] Reloading page to reflect record changes");
+            window.location.reload();
+        }, 1500);
     }
 
     // ----- Structured Data Handlers -----
