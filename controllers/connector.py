@@ -32,10 +32,9 @@ _logger = logging.getLogger(__name__)
 _SESSION_STORE = {}
 _MAX_HISTORY = 50
 
-# Per-user reload flag — set by /execute when writes happen, consumed by /message.
-# This is the reliable delivery mechanism for triggering frontend refresh after
-# chat-driven writes, working independently of the bus/WebSocket notification system.
-_PENDING_RELOADS = {}
+# Per-user reload flag key prefix for ir.config_parameter.
+# Set by /execute when writes happen, checked by /message.
+_RELOAD_PARAM_PREFIX = 'crm_assistant.needs_reload.'
 
 
 def _get_config(key, default=''):
@@ -178,10 +177,14 @@ class CrmAssistantConnectorController(http.Controller):
         })
         _save_session(session_id, session_history)
 
-        # Check if any writes were performed during this exchange
-        # (flag set by /execute endpoint during gateway tool execution)
+        # Check if any writes were performed during this exchange.
+        # The /execute endpoint sets ir.config_parameter when writes happen.
         uid = request.env.uid
-        needs_reload = _PENDING_RELOADS.pop(uid, False)
+        reload_param = f'{_RELOAD_PARAM_PREFIX}{uid}'
+        needs_reload = bool(request.env['ir.config_parameter'].sudo().get_param(reload_param))
+        if needs_reload:
+            _logger.info("Reload flag found for user %s — telling frontend to refresh", uid)
+            request.env['ir.config_parameter'].sudo().set_param(reload_param, '0')
 
         return {
             'text': data.get('text', ''),
@@ -220,17 +223,16 @@ class CrmAssistantConnectorController(http.Controller):
         result = execute_instruction_set(env, instruction_set)
 
         # If any writes were performed, flag this user for frontend reload.
-        # The /message endpoint will include reload: true in its response.
+        # Uses ir.config_parameter (database-backed) for cross-request reliability.
         if result.get('success'):
-            for step_result in result.get('results', []):
-                if 'result' in step_result:
-                    # A successful step with a result indicates a write likely happened.
-                    # The actual notification dispatch is handled by execute_instruction_set.
-                    pass
-            # Set the flag if the instruction set contains any mutating steps
             steps = instruction_set.get('steps', [])
             if any(s.get('method') in ('write', 'create', 'unlink') for s in steps):
-                _PENDING_RELOADS[user_id] = True
+                reload_param = f'{_RELOAD_PARAM_PREFIX}{user_id}'
+                request.env['ir.config_parameter'].sudo().set_param(reload_param, '1')
+                _logger.info(
+                    "Reload flag SET for user %s (instruction set trace=%s)",
+                    user_id, trace_id
+                )
 
         return result
 
