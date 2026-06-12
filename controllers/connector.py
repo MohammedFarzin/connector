@@ -178,13 +178,23 @@ class CrmAssistantConnectorController(http.Controller):
         _save_session(session_id, session_history)
 
         # Check if any writes were performed during this exchange.
-        # The /execute endpoint sets ir.config_parameter when writes happen.
+        # Use raw SQL to bypass ORM cache — get_param/search can serve
+        # stale results across request boundaries.
         uid = request.env.uid
-        reload_param = f'{_RELOAD_PARAM_PREFIX}{uid}'
-        needs_reload = bool(request.env['ir.config_parameter'].sudo().get_param(reload_param))
-        if needs_reload:
+        needs_reload = False
+        request.env.cr.execute(
+            "SELECT value FROM ir_config_parameter WHERE key = %s",
+            (f'{_RELOAD_PARAM_PREFIX}{uid}',)
+        )
+        row = request.env.cr.fetchone()
+        if row and row[0] == '1':
+            needs_reload = True
             _logger.info("Reload flag found for user %s — telling frontend to refresh", uid)
-            request.env['ir.config_parameter'].sudo().set_param(reload_param, '0')
+            # Clear the flag so it doesn't trigger on the next message
+            request.env.cr.execute(
+                "UPDATE ir_config_parameter SET value = '0' WHERE key = %s",
+                (f'{_RELOAD_PARAM_PREFIX}{uid}',)
+            )
 
         return {
             'text': data.get('text', ''),
