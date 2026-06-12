@@ -76,8 +76,9 @@ def _normalize_m2o_values(vals):
 
     Odoo's crm.lead.write() calls browse(vals['stage_id']) which crashes if
     the value is a list (→ multi-record), tuple (→ unpacked as multiple IDs),
-    or recordset (→ can't adapt type). This normalizes all three cases to a
-    single integer ID.
+    recordset (→ can't adapt type), dict (→ browse uses string keys as _ids),
+    or list-of-dicts (→ browse iterates all records). This normalizes all
+    cases to a single integer ID.
 
     Args:
         vals: dict of field→value pairs for write/create
@@ -86,10 +87,17 @@ def _normalize_m2o_values(vals):
         dict with normalized Many2one values
     """
     for key, value in vals.items():
-        # List: extract first element if it's a list of IDs
+        # List: extract first element (list of int IDs or list of dicts)
         if isinstance(value, list):
-            if value and isinstance(value[0], int):
-                vals[key] = value[0]
+            if value:
+                if isinstance(value[0], int):
+                    vals[key] = value[0]
+                elif isinstance(value[0], dict) and 'id' in value[0]:
+                    vals[key] = value[0]['id']
+        # Dict (serialized single record, e.g. from ${step.0}): extract 'id'
+        elif isinstance(value, dict):
+            if 'id' in value:
+                vals[key] = value['id']
         # Tuple: extract first element (the ID)
         elif isinstance(value, tuple):
             if value:
@@ -250,6 +258,12 @@ def execute_instruction_set(env, instruction_set):
                 'context': step.get('context', {}),
             }
 
+            _logger.info(
+                "Instruction %s: %s.%s ids=%s args=%s kwargs=%s",
+                step_id, instruction['model'], instruction['method'],
+                instruction['ids'], instruction['args'], instruction['kwargs'],
+            )
+
             result = execute_instruction(env, instruction)
 
             if not result['success']:
@@ -307,6 +321,9 @@ def _resolve_references(data, captured):
                         idx = int(list_index)
                         if isinstance(val, list) and 0 <= idx < len(val):
                             val = val[idx]
+                        elif isinstance(val, dict) and idx == 0:
+                            # Treat single dict as a 1-element list for ${step.0.field}
+                            pass  # val stays as the dict; field_ref extraction follows
                         else:
                             return value  # index out of range or not a list
                     # Handle field access: ${step.field} or ${step.0.field}
