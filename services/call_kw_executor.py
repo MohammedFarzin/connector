@@ -304,7 +304,8 @@ def execute_instruction_set(env, instruction_set):
             for notification in pending_notifications:
                 _dispatch_notification(env, notification)
 
-        return {'success': error_step is None, 'trace_id': trace_id, 'results': results, 'error_step': error_step}
+        return {'success': error_step is None, 'trace_id': trace_id, 'results': results, 'error_step': error_step,
+                'had_writes': len(pending_notifications) > 0}
 
     except Exception as e:
         if transactional:
@@ -323,7 +324,9 @@ def _build_notification_data(env, model_name, method_name, record_ids):
     is a mutating write — otherwise returns None. The caller is responsible
     for dispatching at the right time (e.g. after transaction commit).
     """
-    if method_name not in ('write', 'create', 'unlink'):
+    if method_name not in ('write', 'create', 'unlink', 'action_set_won',
+                            'action_set_lost', 'message_post', 'activity_schedule',
+                            'action_cancel'):
         return None
     return {
         'model': model_name,

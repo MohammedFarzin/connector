@@ -45,6 +45,13 @@ export class FloatingWidget extends Component {
         // Session restore runs on mount (async, with loading indicator)
         onMounted(() => {
             this._initSession();
+            // Reopen if we came from a programmatic reload after writes
+            try {
+                if (sessionStorage.getItem('crm_assistant_keep_open') === '1') {
+                    sessionStorage.removeItem('crm_assistant_keep_open');
+                    this.state.isOpen = true;
+                }
+            } catch (_) {}
         });
 
         // Subscribe to real-time event hub
@@ -164,6 +171,8 @@ export class FloatingWidget extends Component {
                 // than the bus notification (which is a secondary best-effort).
                 if (result.reload) {
                     console.debug("[ChatWidget] Backend performed writes — reloading page");
+                    // Flag so the widget stays open after reload
+                    try { sessionStorage.setItem('crm_assistant_keep_open', '1'); } catch (_) {}
                     setTimeout(() => window.location.reload(), 800);
                 }
             }

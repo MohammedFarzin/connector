@@ -244,16 +244,15 @@ class CrmAssistantConnectorController(http.Controller):
         env = request.env(user=user_id)
         result = execute_instruction_set(env, instruction_set)
 
-        # Flag user for frontend reload. The /message endpoint will
-        # pick this up and include reload:true in its response.
-        if result.get('success'):
-            steps = instruction_set.get('steps', [])
-            if any(s.get('method') in ('write', 'create', 'unlink') for s in steps):
-                _set_reload_flag(request.env, user_id)
-                _logger.info(
-                    "Reload flag SET for user %s (instruction set trace=%s)",
-                    user_id, trace_id
-                )
+        # Flag user for frontend reload if any writes were dispatched.
+        # Uses result['had_writes'] from execute_instruction_set — it
+        # tracks actual notification dispatches, not method-name guesses.
+        if result.get('had_writes'):
+            _set_reload_flag(request.env, user_id)
+            _logger.info(
+                "Reload flag SET for user %s (instruction set trace=%s)",
+                user_id, trace_id
+            )
 
         return result
 
