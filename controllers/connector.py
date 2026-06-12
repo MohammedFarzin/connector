@@ -146,6 +146,7 @@ class CrmAssistantConnectorController(http.Controller):
                 signed.get('signature', ''),
                 signed.get('nonce', ''),
                 signed.get('timestamp', ''),
+                env=request.env,
             )
             if not verification['valid']:
                 _logger.warning("HMAC rejected for tool %s: %s", tool_name, verification.get('error'))
@@ -191,7 +192,7 @@ class CrmAssistantConnectorController(http.Controller):
         UID is extracted from the signed payload (set by gateway from user context).
         """
         # FIXED: HMAC verification BEFORE any uid/access check
-        verification = verify_signature(payload, signature, nonce, timestamp)
+        verification = verify_signature(payload, signature, nonce, timestamp, env=request.env)
         if not verification['valid']:
             return {'success': False, 'error': verification.get('error'), 'blocked': True}
 

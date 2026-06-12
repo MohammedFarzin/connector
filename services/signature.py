@@ -4,6 +4,9 @@ HMAC signature verification with persistent nonce storage.
 
 Key fix: Uses threading.RLock (reentrant) to prevent deadlock.
 Nonces are persisted in crm.assistant.nonce model for cross-restart protection.
+
+Accepts an optional `env` parameter to avoid dependency on odoo.http.request,
+enabling use in background threads, cron jobs, and unit tests.
 """
 
 import hashlib
@@ -12,8 +15,6 @@ import logging
 import time
 from threading import RLock
 
-from odoo.http import request
-
 _logger = logging.getLogger(__name__)
 
 MAX_PAYLOAD_AGE_SECONDS = 300  # 5 minutes
@@ -21,15 +22,36 @@ CLOCK_SKEW_TOLERANCE = 30      # Accept ±30s clock skew for timestamps
 _NONCE_LOCK = RLock()
 
 
-def _get_shared_secret():
-    return request.env['ir.config_parameter'].sudo().get_param(
-        'crm_assistant_connector.secret', ''
-    ) or None
+def _get_shared_secret(env=None):
+    """Get the shared HMAC secret from config.
+
+    Args:
+        env: Odoo Environment (optional). If not provided, falls back to
+             odoo.http.request.env for backward compatibility.
+
+    Returns:
+        str or None: The shared secret, or None if not configured.
+    """
+    if env is not None:
+        return env['ir.config_parameter'].sudo().get_param(
+            'crm_assistant_connector.secret', ''
+        ) or None
+    # Fallback: HTTP request context
+    try:
+        from odoo.http import request
+        if request:
+            return request.env['ir.config_parameter'].sudo().get_param(
+                'crm_assistant_connector.secret', ''
+            ) or None
+    except RuntimeError as e:
+        if 'not bound' not in str(e):
+            raise
+    return None
 
 
-def _check_and_record_nonce(nonce, now):
+def _check_and_record_nonce(env, nonce, now):
     """Check nonce uniqueness using persistent DB storage."""
-    Nonce = request.env['crm.assistant.nonce'].sudo()
+    Nonce = env['crm.assistant.nonce'].sudo()
     # First garbage-collect expired nonces
     Nonce._gc_nonces()
     # Check if this nonce exists
@@ -43,12 +65,20 @@ def _check_and_record_nonce(nonce, now):
     return True
 
 
-def verify_signature(payload, signature, nonce, timestamp):
+def verify_signature(payload, signature, nonce, timestamp, env=None):
     """Verify HMAC-SHA256 signature on a payload.
+
+    Args:
+        payload: str — the signed payload (JSON string)
+        signature: str — hex-encoded HMAC-SHA256 signature
+        nonce: str — unique nonce for replay protection
+        timestamp: str — ISO 8601 timestamp
+        env: Odoo Environment (optional). Required for nonce persistence.
+             If not provided in non-HTTP contexts, nonce checking is skipped.
 
     Returns: {'valid': True} or {'valid': False, 'error': 'reason'}
     """
-    secret = _get_shared_secret()
+    secret = _get_shared_secret(env)
     if not secret:
         return {'valid': False, 'error': 'Connector not configured. Set shared secret in Settings.'}
 
@@ -65,11 +95,14 @@ def verify_signature(payload, signature, nonce, timestamp):
     except (ValueError, TypeError):
         return {'valid': False, 'error': 'Invalid timestamp format.'}
 
-    # Verify nonce uniqueness (persistent)
-    with _NONCE_LOCK:
-        now_epoch = time.time()
-        if not _check_and_record_nonce(nonce, now_epoch):
-            return {'valid': False, 'error': 'Duplicate nonce — possible replay attack.'}
+    # Verify nonce uniqueness (persistent) — requires env
+    if env is not None:
+        with _NONCE_LOCK:
+            now_epoch = time.time()
+            if not _check_and_record_nonce(env, nonce, now_epoch):
+                return {'valid': False, 'error': 'Duplicate nonce — possible replay attack.'}
+    else:
+        _logger.warning("No env provided — nonce replay protection skipped")
 
     # Verify HMAC signature
     message = f"{payload}:{nonce}:{timestamp}"

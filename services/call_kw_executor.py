@@ -10,22 +10,42 @@ Key guarantees:
 - env.ref() resolved for args containing XML ID strings
 - All results serialized via proper serializer (datetime, binary, recordset safe)
 - Multi-step instructions support transactional rollback via savepoints
+- Many2one values normalized (lists, tuples, recordsets → single ID)
+- ISO 8601 datetime strings converted to Odoo format before dispatch
+- Step references support list indexing (${step.0.field}) and dict unwrapping
 """
 
 import json
 import logging
+import re
+
+from datetime import datetime
 
 from odoo.http import request
 from odoo.exceptions import AccessError, ValidationError
+from odoo import models
 
 from .allowlist import is_allowed
 from .serializer import serialize_result
 
 _logger = logging.getLogger(__name__)
 
+# Regex for valid Odoo XML IDs: module_name.model_id or module.xml_id
+_XML_ID_RE = re.compile(r'^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$')
+
+# ISO 8601 datetime pattern: 2026-06-12T13:52:32 or 2026-06-12T13:52:32.123456
+# Also matches timezone-aware: 2026-06-12T13:52:32Z or +00:00/-05:00
+_ISO_DATETIME_RE = re.compile(
+    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$'
+)
+
 
 def _resolve_xml_ref(env, value):
     """Resolve an XML ID string to its database ID via env.ref().
+
+    Only attempts resolution for strings matching the strict XML ID pattern
+    (module.xml_id) to avoid false positives on URLs, version strings, and
+    other dot-containing values.
 
     Args:
         env: Odoo Environment
@@ -34,7 +54,7 @@ def _resolve_xml_ref(env, value):
     Returns:
         int: database ID, or the original value if not an XML ID string
     """
-    if isinstance(value, str) and '.' in value and not value.startswith(('http', '$')):
+    if isinstance(value, str) and _XML_ID_RE.match(value) and not value.startswith('$'):
         try:
             return env.ref(value).id
         except ValueError:
@@ -51,17 +71,69 @@ def _resolve_xml_refs(env, data):
     return _resolve_xml_ref(env, data)
 
 
+def _normalize_m2o_values(vals):
+    """Normalize Many2one field values in a write/create vals dict.
+
+    Odoo's crm.lead.write() calls browse(vals['stage_id']) which crashes if
+    the value is a list (→ multi-record), tuple (→ unpacked as multiple IDs),
+    or recordset (→ can't adapt type). This normalizes all three cases to a
+    single integer ID.
+
+    Args:
+        vals: dict of field→value pairs for write/create
+
+    Returns:
+        dict with normalized Many2one values
+    """
+    for key, value in vals.items():
+        # List: extract first element if it's a list of IDs
+        if isinstance(value, list):
+            if value and isinstance(value[0], int):
+                vals[key] = value[0]
+        # Tuple: extract first element (the ID)
+        elif isinstance(value, tuple):
+            if value:
+                vals[key] = value[0]
+        # Recordset: extract .id
+        elif isinstance(value, models.BaseModel):
+            if value:
+                vals[key] = value.id
+    return vals
+
+
+def _normalize_datetime_strings(vals):
+    """Convert ISO 8601 datetime strings in vals to Odoo's expected format.
+
+    Odoo's calendar.event and other models expect '%Y-%m-%d %H:%M:%S' format,
+    but the gateway sends ISO 8601 ('2026-06-12T13:52:32'). This converts
+    ISO strings to Odoo format before dispatch.
+
+    Args:
+        vals: dict of field→value pairs for write/create
+
+    Returns:
+        dict with datetime strings converted
+    """
+    for key, value in vals.items():
+        if isinstance(value, str) and _ISO_DATETIME_RE.match(value):
+            # Convert '2026-06-12T13:52:32.123456' → '2026-06-12 13:52:32'
+            vals[key] = value.replace('T', ' ').split('.')[0]
+    return vals
+
+
 def execute_instruction(env, instruction):
     """Execute a single ORM instruction with allowlist check.
 
     Steps:
       1. Check model.method against allowlist → reject if not allowed
       2. Resolve XML ID references in args/kwargs
-      3. Resolve model via Odoo registry
-      4. Apply context/sudo as requested
-      5. Browse record IDs if provided
-      6. Reflect method and execute
-      7. Serialize result to JSON-safe format
+      3. Normalize Many2one values (lists, tuples, recordsets → single ID)
+      4. Convert ISO datetime strings to Odoo format
+      5. Resolve model via Odoo registry
+      6. Apply context/sudo as requested
+      7. Browse record IDs if provided
+      8. Reflect method and execute
+      9. Serialize result to JSON-safe format
     """
     model_name = instruction.get('model', '')
     method_name = instruction.get('method', '')
@@ -85,19 +157,38 @@ def execute_instruction(env, instruction):
     args = _resolve_xml_refs(env, args)
     kwargs = _resolve_xml_refs(env, kwargs)
 
+    # --- STEP 2: Normalize Many2one values (prevent list/tuple/recordset crashes) ---
+    if method_name == 'write' and args:
+        if isinstance(args[0], dict):
+            args[0] = _normalize_m2o_values(args[0])
+        elif isinstance(args[0], list) and args[0] and isinstance(args[0][0], dict):
+            args[0] = [_normalize_m2o_values(d) for d in args[0]]
+    if method_name == 'create' and args:
+        if isinstance(args[0], dict):
+            args[0] = _normalize_m2o_values(args[0])
+        elif isinstance(args[0], list) and args[0] and isinstance(args[0][0], dict):
+            args[0] = [_normalize_m2o_values(d) for d in args[0]]
+
+    # --- STEP 3: Convert ISO datetime strings to Odoo format ---
+    if method_name in ('create', 'write') and args:
+        if isinstance(args[0], dict):
+            args[0] = _normalize_datetime_strings(args[0])
+        elif isinstance(args[0], list) and args[0] and isinstance(args[0][0], dict):
+            args[0] = [_normalize_datetime_strings(d) for d in args[0]]
+
     _logger.debug("Executing: %s.%s(sudo=%s)", model_name, method_name, use_sudo)
 
     try:
-        # --- STEP 2: Resolve model ---
+        # --- STEP 4: Resolve model ---
         model = env[model_name]
 
-        # --- STEP 3: Apply context and sudo ---
+        # --- STEP 5: Apply context and sudo ---
         if context:
             model = model.with_context(**context)
         if use_sudo:
             model = model.sudo()
 
-        # --- STEP 4: Browse records ---
+        # --- STEP 6: Browse records ---
         if record_ids:
             model = model.browse(record_ids)
             if not model.exists():
@@ -106,11 +197,11 @@ def execute_instruction(env, instruction):
                     'error': f"No {model_name} records found with IDs {record_ids}",
                 }
 
-        # --- STEP 5: Reflect and execute ---
+        # --- STEP 7: Reflect and execute ---
         method = getattr(model, method_name)
         result = method(*args, **kwargs)
 
-        # --- STEP 6: Serialize ---
+        # --- STEP 8: Serialize ---
         return {'success': True, 'result': serialize_result(result)}
 
     except KeyError:
@@ -146,13 +237,14 @@ def execute_instruction_set(env, instruction_set):
         for step in steps:
             step_id = step.get('id', f'step_{len(results)}')
             resolved_kwargs = _resolve_references(step.get('kwargs', {}), captured)
+            resolved_args = _resolve_references(step.get('args', []), captured)
             resolved_ids = _resolve_references_list(step.get('ids'), captured)
 
             instruction = {
                 'model': step.get('model'),
                 'method': step.get('method'),
                 'ids': resolved_ids,
-                'args': step.get('args', []),
+                'args': resolved_args,
                 'kwargs': resolved_kwargs,
                 'sudo': step.get('sudo', False),
                 'context': step.get('context', {}),
@@ -188,43 +280,88 @@ def execute_instruction_set(env, instruction_set):
         return {'success': False, 'trace_id': trace_id, 'error': str(e)}
 
 
-def _resolve_references(kwargs, captured):
-    """Resolve ${step_id} and ${step_id.field} references in kwargs."""
-    import re
-    resolved = {}
-    for key, value in kwargs.items():
+def _resolve_references(data, captured):
+    """Resolve ${step_id}, ${step_id.field}, and ${step_id.N.field} references.
+
+    Supports:
+      - ${step_id} → captured value directly
+      - ${step_id.field} → captured dict's field (e.g. captured['id'])
+      - ${step_id.N.field} → captured list's N-th element's field
+        (e.g. captured[0]['id'] for search_read results)
+
+    Recurses into nested structures so references inside vals dicts in args
+    are resolved (e.g. 'args': [{'stage_id': '${find_stage}'}]).
+    """
+
+    def _resolve(value):
         if isinstance(value, str) and value.startswith('${'):
-            match = re.match(r'\$\{([^}.]+)(?:\.(.+))?\}', value)
+            match = re.match(r'\$\{([^.}]+)(?:\.(\d+))?(?:\.(.+))?\}', value)
             if match:
                 step_ref = match.group(1)
-                field_ref = match.group(2)
+                list_index = match.group(2)
+                field_ref = match.group(3)
                 if step_ref in captured:
                     val = captured[step_ref]
+                    # Handle list indexing: ${step.0.field} or ${step.0}
+                    if list_index is not None:
+                        idx = int(list_index)
+                        if isinstance(val, list) and 0 <= idx < len(val):
+                            val = val[idx]
+                        else:
+                            return value  # index out of range or not a list
+                    # Handle field access: ${step.field} or ${step.0.field}
                     if field_ref and isinstance(val, dict):
-                        val = val.get(field_ref)
-                    resolved[key] = val
-                    continue
-            resolved[key] = value
-        else:
-            resolved[key] = value
-    return resolved
+                        result_val = val.get(field_ref)
+                        if result_val is None:
+                            _logger.warning(
+                                "Reference ${%s%s%s} resolved field '%s' to None",
+                                step_ref,
+                                f'.{list_index}' if list_index else '',
+                                f'.{field_ref}',
+                                field_ref,
+                            )
+                        return result_val
+                    return val
+            return value
+        elif isinstance(value, dict):
+            return {k: _resolve(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [_resolve(v) for v in value]
+        return value
+
+    if isinstance(data, dict):
+        return {key: _resolve(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [_resolve(v) for v in data]
+    return data
 
 
 def _resolve_references_list(ids, captured):
-    """Resolve ${step_id} references in an ids list."""
+    """Resolve ${step_id} references in an ids list.
+
+    Handles captured values that are:
+      - int → appended directly
+      - dict with 'id' key → extracts the id
+      - list of ints → extends the list
+      - list of dicts → extracts ids from each dict
+    """
     if not ids:
         return ids
     resolved = []
     for item in ids:
         if isinstance(item, str) and item.startswith('${'):
-            import re
             match = re.match(r'\$\{([^}.]+)\}', item)
             if match and match.group(1) in captured:
                 val = captured[match.group(1)]
-                if isinstance(val, int):
+                if isinstance(val, int) and not isinstance(val, bool):
                     resolved.append(val)
+                elif isinstance(val, dict) and 'id' in val:
+                    resolved.append(val['id'])
                 elif isinstance(val, list):
-                    resolved.extend(val)
+                    if val and isinstance(val[0], dict) and 'id' in val[0]:
+                        resolved.extend(v['id'] for v in val)
+                    else:
+                        resolved.extend(val)
                 else:
                     resolved.append(item)
                 continue

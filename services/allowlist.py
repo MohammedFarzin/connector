@@ -13,15 +13,15 @@ the corresponding tool mapping in the gateway's instruction_builder.
 # Format: model_name → set of allowed method names
 ALLOWLIST = {
     'crm.lead': {
-        'create', 'write', 'search', 'search_read', 'read', 'browse',
+        'create', 'write', 'search', 'search_read', 'search_count', 'read', 'browse',
         'action_set_won', 'action_set_lost', 'message_post',
         'activity_schedule',
     },
     'crm.stage': {
-        'search', 'search_read', 'read', 'browse',
+        'search', 'search_read', 'search_count', 'read', 'browse',
     },
     'calendar.event': {
-        'create', 'write', 'search', 'search_read', 'read', 'browse',
+        'create', 'write', 'search', 'search_read', 'search_count', 'read', 'browse',
         'action_cancel', 'unlink',
     },
     'calendar.attendee': {
@@ -40,10 +40,10 @@ ALLOWLIST = {
         'search', 'read', 'browse',
     },
     'res.users': {
-        'search', 'search_read', 'read', 'browse',
+        'search', 'search_read', 'search_count', 'read', 'browse',
     },
     'res.partner': {
-        'search', 'search_read', 'read', 'browse',
+        'search', 'search_read', 'search_count', 'read', 'browse',
     },
     'ir.model': {
         'search', 'read', 'browse',
