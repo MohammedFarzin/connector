@@ -788,30 +788,30 @@ class TestExecuteInstructionErrors(common.TransactionCase):
             self.assertIn('id', result['result'][0])
             self.assertIn('is_won', result['result'][0])
 
-    def test_activity_schedule_method_not_found(self):
+    def test_activity_schedule_with_xml_id(self):
         """
-        BUG CONFIRMED: The allowlist contains 'activity_schedule' for crm.lead,
-        but this method doesn't exist on the model.
-
-        In Odoo, the method is inherited from mail.activity.mixin via
-        crm.lead, but the method name differs (likely action_schedule_activity).
-        The allowlist has the wrong method name.
+        FIXED: activity_schedule accepts an XML ID string (e.g.
+        'mail.mail_activity_data_meeting') as act_type_xmlid and
+        resolves it internally via _xmlid_to_res_id(). The connector
+        must NOT pre-resolve XML ID strings in args when
+        resolve_xml_refs=False is set — otherwise activity_schedule
+        crashes with AttributeError when trying to split an integer.
         """
-        activity_type = self.env['mail.activity.type'].search([], limit=1)
-        if not activity_type:
-            self.skipTest("No mail activity types available")
         lead = self.env['crm.lead'].create({'name': 'Activity Lead', 'type': 'lead'})
         instruction = {
             'model': 'crm.lead',
             'method': 'activity_schedule',
             'ids': [lead.id],
-            'args': [activity_type.id],
+            'args': ['mail.mail_activity_data_meeting'],  # XML ID string — NOT pre-resolved
+            'resolve_xml_refs': False,  # activity_schedule resolves it internally
             'kwargs': {'summary': 'Follow up on this lead'},
         }
         with mute_logger('odoo.addons.crm_assistant_connector.services.call_kw_executor'):
             result = execute_instruction(self.env, instruction)
-        if not result['success'] and 'no method' in result.get('error', ''):
-            print(f"\n  >>> BUG CONFIRMED (activity_schedule): {result.get('error')}")
+        self.assertTrue(
+            result['success'],
+            f"activity_schedule should succeed with XML ID string: {result.get('error', '')}"
+        )
 
     def test_search_with_complex_domain(self):
         """Test search_read with a complex domain."""

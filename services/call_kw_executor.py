@@ -18,6 +18,7 @@ Key guarantees:
 import json
 import logging
 import re
+import time
 
 from datetime import datetime
 
@@ -29,6 +30,15 @@ from .allowlist import is_allowed
 from .serializer import serialize_result
 
 _logger = logging.getLogger(__name__)
+
+# -- helpers --
+
+def _safe_repr(obj, max_len=120):
+    """Safe repr of args/kwargs for log messages — truncates long values."""
+    s = repr(obj)
+    if len(s) > max_len:
+        return s[:max_len] + '…'
+    return s
 
 # Regex for valid Odoo XML IDs: module_name.model_id or module.xml_id
 _XML_ID_RE = re.compile(r'^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$')
@@ -162,8 +172,12 @@ def execute_instruction(env, instruction):
     context = instruction.get('context', {})
 
     # --- STEP 1: Resolve XML ID references ---
-    args = _resolve_xml_refs(env, args)
-    kwargs = _resolve_xml_refs(env, kwargs)
+    # Some methods (e.g. activity_schedule) handle their own XML ID
+    # resolution internally and will crash if passed a pre-resolved
+    # integer instead of the raw XML ID string.
+    if instruction.get('resolve_xml_refs', True):
+        args = _resolve_xml_refs(env, args)
+        kwargs = _resolve_xml_refs(env, kwargs)
 
     # --- STEP 2: Normalize Many2one values (prevent list/tuple/recordset crashes) ---
     if method_name == 'write' and args:
@@ -200,14 +214,64 @@ def execute_instruction(env, instruction):
         if record_ids:
             model = model.browse(record_ids)
             if not model.exists():
+                _logger.warning(
+                    "Step failed: %s.%s — no %s records with IDs %s",
+                    model_name, method_name, model_name, record_ids,
+                )
                 return {
                     'success': False,
                     'error': f"No {model_name} records found with IDs {record_ids}",
                 }
 
-        # --- STEP 7: Reflect and execute ---
-        method = getattr(model, method_name)
-        result = method(*args, **kwargs)
+        # --- STEP 7a: Resolve method (AttributeError here = method genuinely missing) ---
+        try:
+            method = getattr(model, method_name)
+        except AttributeError:
+            _logger.error(
+                "Method not found: %s.%s (model=%s, allowlist=%s)",
+                model_name, method_name, type(model).__name__,
+                is_allowed(model_name, method_name),
+            )
+            return {
+                'success': False,
+                'error': f"Model '{model_name}' has no method '{method_name}'",
+            }
+
+        # --- STEP 7b: Execute (exceptions here = method crashed, not missing) ---
+        try:
+            result = method(*args, **kwargs)
+        except AccessError as e:
+            _logger.warning(
+                "Access denied: %s.%s(args=%s, kwargs=%s) → %s",
+                model_name, method_name, _safe_repr(args), _safe_repr(kwargs), e,
+            )
+            return {'success': False, 'error': f"Permission denied: {str(e)}"}
+        except ValidationError as e:
+            _logger.warning(
+                "Validation error: %s.%s(args=%s, kwargs=%s) → %s",
+                model_name, method_name, _safe_repr(args), _safe_repr(kwargs), e,
+            )
+            return {'success': False, 'error': str(e)}
+        except AttributeError as e:
+            _logger.error(
+                "AttributeError in %s.%s(args=%s, kwargs=%s): %s",
+                model_name, method_name, _safe_repr(args), _safe_repr(kwargs), e,
+            )
+            return {
+                'success': False,
+                'error': (
+                    f"Method '{method_name}' on '{model_name}' raised AttributeError. "
+                    f"This usually means an argument was the wrong type (e.g., "
+                    f"an integer was passed where a string XML ID was expected). "
+                    f"Detail: {e}"
+                ),
+            }
+        except Exception as e:
+            _logger.exception(
+                "Error in %s.%s(args=%s, kwargs=%s): %s",
+                model_name, method_name, _safe_repr(args), _safe_repr(kwargs), e,
+            )
+            return {'success': False, 'error': f"Execution error: {str(e)}"}
 
         # --- STEP 8: Collect notification data for mutating operations ---
         notification = _build_notification_data(
@@ -222,16 +286,8 @@ def execute_instruction(env, instruction):
         return response
 
     except KeyError:
+        _logger.error("Unknown model: %s (requested by instruction)", model_name)
         return {'success': False, 'error': f"Unknown model: {model_name}"}
-    except AttributeError:
-        return {'success': False, 'error': f"Model '{model_name}' has no method '{method_name}'"}
-    except AccessError as e:
-        return {'success': False, 'error': f"Permission denied: {str(e)}"}
-    except ValidationError as e:
-        return {'success': False, 'error': str(e)}
-    except Exception as e:
-        _logger.exception("Error executing %s.%s", model_name, method_name)
-        return {'success': False, 'error': f"Execution error: {str(e)}"}
 
 
 def execute_instruction_set(env, instruction_set):
@@ -251,8 +307,10 @@ def execute_instruction_set(env, instruction_set):
     if transactional:
         env.cr.execute('SAVEPOINT crm_assistant_instruction_set')
 
+    total_start = time.time()
     try:
         for step in steps:
+            step_start = time.time()
             step_id = step.get('id', f'step_{len(results)}')
             resolved_kwargs = _resolve_references(step.get('kwargs', {}), captured)
             resolved_args = _resolve_references(step.get('args', []), captured)
@@ -266,18 +324,25 @@ def execute_instruction_set(env, instruction_set):
                 'kwargs': resolved_kwargs,
                 'sudo': step.get('sudo', False),
                 'context': step.get('context', {}),
+                'resolve_xml_refs': step.get('resolve_xml_refs', True),
             }
 
             _logger.info(
-                "Instruction %s: %s.%s ids=%s args=%s kwargs=%s",
+                "[%s] %s.%s ids=%s args=%s kwargs=%s",
                 step_id, instruction['model'], instruction['method'],
-                instruction['ids'], instruction['args'], instruction['kwargs'],
+                instruction['ids'], _safe_repr(instruction['args'], 80),
+                _safe_repr(instruction['kwargs'], 80),
             )
 
             result = execute_instruction(env, instruction)
+            step_ms = int((time.time() - step_start) * 1000)
 
             if not result['success']:
                 error_step = step_id
+                _logger.error(
+                    "[%s] FAILED (%dms): %s",
+                    step_id, step_ms, result.get('error', 'unknown error'),
+                )
                 results.append({'step': step_id, 'error': result['error']})
                 break
 
@@ -285,6 +350,7 @@ def execute_instruction_set(env, instruction_set):
                 captured[step_id] = result['result']
 
             results.append({'step': step_id, 'result': result['result']})
+            _logger.info("[%s] OK (%dms)", step_id, step_ms)
 
             # Collect notification data (dispatch deferred for transactional sets)
             notification = result.get('_notification')
@@ -294,9 +360,14 @@ def execute_instruction_set(env, instruction_set):
                 else:
                     _dispatch_notification(env, notification)
 
+        total_ms = int((time.time() - total_start) * 1000)
+
         if error_step and transactional:
             env.cr.execute('ROLLBACK TO SAVEPOINT crm_assistant_instruction_set')
-            _logger.warning("Instruction set %s rolled back at %s", trace_id, error_step)
+            _logger.warning(
+                "[%s] Rolled back at step '%s' (%dms total)",
+                trace_id, error_step, total_ms,
+            )
             pending_notifications = []  # discard — data was rolled back
         elif transactional:
             env.cr.execute('RELEASE SAVEPOINT crm_assistant_instruction_set')
@@ -304,8 +375,19 @@ def execute_instruction_set(env, instruction_set):
             for notification in pending_notifications:
                 _dispatch_notification(env, notification)
 
-        return {'success': error_step is None, 'trace_id': trace_id, 'results': results, 'error_step': error_step,
-                'had_writes': len(pending_notifications) > 0}
+        if not error_step:
+            _logger.info(
+                "[%s] All %d steps OK (%dms total)",
+                trace_id, len(results), total_ms,
+            )
+
+        return {
+            'success': error_step is None,
+            'trace_id': trace_id,
+            'results': results,
+            'error_step': error_step,
+            'had_writes': len(pending_notifications) > 0,
+        }
 
     except Exception as e:
         if transactional:
@@ -313,7 +395,7 @@ def execute_instruction_set(env, instruction_set):
                 env.cr.execute('ROLLBACK TO SAVEPOINT crm_assistant_instruction_set')
             except Exception:
                 pass
-        _logger.exception("Fatal instruction set error: %s", trace_id)
+        _logger.exception("[%s] Fatal error in instruction set: %s", trace_id, e)
         return {'success': False, 'trace_id': trace_id, 'error': str(e)}
 
 
