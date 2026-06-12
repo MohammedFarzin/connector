@@ -32,6 +32,11 @@ _logger = logging.getLogger(__name__)
 _SESSION_STORE = {}
 _MAX_HISTORY = 50
 
+# Per-user reload flag — set by /execute when writes happen, consumed by /message.
+# This is the reliable delivery mechanism for triggering frontend refresh after
+# chat-driven writes, working independently of the bus/WebSocket notification system.
+_PENDING_RELOADS = {}
+
 
 def _get_config(key, default=''):
     return request.env['ir.config_parameter'].sudo().get_param(
@@ -173,11 +178,17 @@ class CrmAssistantConnectorController(http.Controller):
         })
         _save_session(session_id, session_history)
 
+        # Check if any writes were performed during this exchange
+        # (flag set by /execute endpoint during gateway tool execution)
+        uid = request.env.uid
+        needs_reload = _PENDING_RELOADS.pop(uid, False)
+
         return {
             'text': data.get('text', ''),
             'html': data.get('html', ''),
             'session_id': session_id,
             'execution_results': execution_results,
+            'reload': needs_reload,
         }
 
     # ============================
@@ -207,6 +218,20 @@ class CrmAssistantConnectorController(http.Controller):
         # Execute as the target user
         env = request.env(user=user_id)
         result = execute_instruction_set(env, instruction_set)
+
+        # If any writes were performed, flag this user for frontend reload.
+        # The /message endpoint will include reload: true in its response.
+        if result.get('success'):
+            for step_result in result.get('results', []):
+                if 'result' in step_result:
+                    # A successful step with a result indicates a write likely happened.
+                    # The actual notification dispatch is handled by execute_instruction_set.
+                    pass
+            # Set the flag if the instruction set contains any mutating steps
+            steps = instruction_set.get('steps', [])
+            if any(s.get('method') in ('write', 'create', 'unlink') for s in steps):
+                _PENDING_RELOADS[user_id] = True
+
         return result
 
     # ============================

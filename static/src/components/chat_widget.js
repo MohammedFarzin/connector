@@ -158,6 +158,14 @@ export class FloatingWidget extends Component {
                 if (result.structured_data) {
                     this._processStructuredData(result.structured_data);
                 }
+
+                // Reload page if the backend performed any writes.
+                // This is the primary delivery mechanism — more reliable
+                // than the bus notification (which is a secondary best-effort).
+                if (result.reload) {
+                    console.debug("[ChatWidget] Backend performed writes — reloading page");
+                    setTimeout(() => window.location.reload(), 800);
+                }
             }
 
         } catch (err) {

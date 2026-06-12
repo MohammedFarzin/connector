@@ -344,7 +344,7 @@ def _dispatch_notification(env, notification):
             'crm_assistant_record_changed',
             notification,
         )
-        _logger.debug(
+        _logger.info(
             "Bus notification dispatched: %s.%s on channel crm_assistant_%s",
             notification['model'], notification['method'], env.uid,
         )
