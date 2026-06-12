@@ -32,9 +32,34 @@ _logger = logging.getLogger(__name__)
 _SESSION_STORE = {}
 _MAX_HISTORY = 50
 
-# Per-user reload flag key prefix for ir.config_parameter.
-# Set by /execute when writes happen, checked by /message.
+# Per-user reload flag — stored in ir_config_parameter so it works
+# across multiple worker processes (not just workers=0).
 _RELOAD_PARAM_PREFIX = 'crm_assistant.needs_reload.'
+
+
+def _set_reload_flag(env, user_id):
+    """Flag a user for frontend reload after a write operation."""
+    env['ir.config_parameter'].sudo().set_param(
+        f'{_RELOAD_PARAM_PREFIX}{user_id}', '1'
+    )
+
+
+def _check_reload_flag(env, uid):
+    """Check and clear the reload flag for a user. Returns bool."""
+    # Use raw SQL to bypass ORM cache — get_param's @ormcache serves
+    # stale results across request boundaries.
+    env.cr.execute(
+        "SELECT value FROM ir_config_parameter WHERE key = %s",
+        (f'{_RELOAD_PARAM_PREFIX}{uid}',)
+    )
+    row = env.cr.fetchone()
+    if row and row[0] == '1':
+        env.cr.execute(
+            "UPDATE ir_config_parameter SET value = '0' WHERE key = %s",
+            (f'{_RELOAD_PARAM_PREFIX}{uid}',)
+        )
+        return True
+    return False
 
 
 def _get_config(key, default=''):
@@ -177,24 +202,11 @@ class CrmAssistantConnectorController(http.Controller):
         })
         _save_session(session_id, session_history)
 
-        # Check if any writes were performed during this exchange.
-        # Use raw SQL to bypass ORM cache — get_param/search can serve
-        # stale results across request boundaries.
+        # Check if /execute flagged any writes during this exchange.
         uid = request.env.uid
-        needs_reload = False
-        request.env.cr.execute(
-            "SELECT value FROM ir_config_parameter WHERE key = %s",
-            (f'{_RELOAD_PARAM_PREFIX}{uid}',)
-        )
-        row = request.env.cr.fetchone()
-        if row and row[0] == '1':
-            needs_reload = True
+        needs_reload = _check_reload_flag(request.env, uid)
+        if needs_reload:
             _logger.info("Reload flag found for user %s — telling frontend to refresh", uid)
-            # Clear the flag so it doesn't trigger on the next message
-            request.env.cr.execute(
-                "UPDATE ir_config_parameter SET value = '0' WHERE key = %s",
-                (f'{_RELOAD_PARAM_PREFIX}{uid}',)
-            )
 
         return {
             'text': data.get('text', ''),
@@ -232,13 +244,12 @@ class CrmAssistantConnectorController(http.Controller):
         env = request.env(user=user_id)
         result = execute_instruction_set(env, instruction_set)
 
-        # If any writes were performed, flag this user for frontend reload.
-        # Uses ir.config_parameter (database-backed) for cross-request reliability.
+        # Flag user for frontend reload. The /message endpoint will
+        # pick this up and include reload:true in its response.
         if result.get('success'):
             steps = instruction_set.get('steps', [])
             if any(s.get('method') in ('write', 'create', 'unlink') for s in steps):
-                reload_param = f'{_RELOAD_PARAM_PREFIX}{user_id}'
-                request.env['ir.config_parameter'].sudo().set_param(reload_param, '1')
+                _set_reload_flag(request.env, user_id)
                 _logger.info(
                     "Reload flag SET for user %s (instruction set trace=%s)",
                     user_id, trace_id
