@@ -23,4 +23,5 @@ Open-sourced under MIT — safe to distribute freely.
     'application': False,
     'auto_install': False,
     'license': 'Other OSI approved licence',
+
 }
