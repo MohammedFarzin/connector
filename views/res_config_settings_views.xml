@@ -1,31 +1,90 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
+    <!--
+        Dual-version settings view (v16 + v18 compatible).
+
+        Strategy: two inherited views.
+        (1) Patch (priority=1) ensures a div.settings exists inside
+            the form.  On v16 this is harmless (the container already exists
+            inside div.o_setting_container).  On v18 the form is empty
+            by default so we add the placeholder.
+        (2) The main view targets //div[hasclass('settings')] which works on
+            both versions after the patch.
+    -->
+
+    <!-- Patch: guarantee div.settings exists (v18 compatibility) -->
+    <record id="patch_settings_div" model="ir.ui.view">
+        <field name="name">CRM Assistant Connector — patch settings div</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="priority" eval="1"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <div class="settings"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Main settings block ================================================ -->
     <record id="view_crm_assistant_connector_settings" model="ir.ui.view">
         <field name="name">CRM Assistant Connector Settings</field>
         <field name="model">res.config.settings</field>
         <field name="inherit_id" ref="base.res_config_settings_view_form"/>
         <field name="arch" type="xml">
-            <xpath expr="//form" position="inside">
-                <app data-string="CRM Assistant Connector" string="CRM Assistant Connector"
-                     name="crm_assistant_connector" groups="base.group_system">
-                    <block title="Gateway Configuration" name="crm_assistant_connector_gateway">
-                        <setting help="URL of the CRM Assistant Gateway service">
-                            <field name="crm_assistant_gateway_url"
-                                   placeholder="http://localhost:8000"/>
-                        </setting>
-                        <setting help="Shared secret for HMAC request signing">
-                            <field name="crm_assistant_secret" password="True"
-                                   placeholder="Paste from your CRM Assistant dashboard"/>
-                        </setting>
-                    </block>
-                    <block title="Connection Test" name="crm_assistant_connector_test">
-                        <setting>
-                            <button name="test_crm_assistant_connection"
-                                    type="object" string="Test Connection"
-                                    class="btn btn-primary"/>
-                        </setting>
-                    </block>
-                </app>
+            <xpath expr="//div[hasclass('settings')]" position="inside">
+                <div class="app_settings_block"
+                     data-string="CRM Assistant Connector"
+                     string="CRM Assistant Connector"
+                     data-key="crm_assistant_connector"
+                     groups="base.group_system">
+
+                    <h2>Gateway Configuration</h2>
+                    <div class="row mt16 o_settings_container"
+                         name="crm_assistant_connector_gateway">
+                        <div class="col-12 o_setting_box">
+                            <div class="o_setting_left_pane">
+                                <label for="crm_assistant_gateway_url" string="Gateway URL"/>
+                                <div class="text-muted">
+                                    URL of the CRM Assistant Gateway service
+                                    (e.g. http://localhost:8000)
+                                </div>
+                            </div>
+                            <div class="o_setting_right_pane">
+                                <field name="crm_assistant_gateway_url"
+                                       placeholder="http://localhost:8000"
+                                       class="w-100"/>
+                            </div>
+                        </div>
+                        <div class="col-12 o_setting_box">
+                            <div class="o_setting_left_pane">
+                                <label for="crm_assistant_secret" string="Shared Secret"/>
+                                <div class="text-muted">
+                                    Shared secret for HMAC request signing.
+                                    Paste from your CRM Assistant dashboard.
+                                </div>
+                            </div>
+                            <div class="o_setting_right_pane">
+                                <field name="crm_assistant_secret"
+                                       password="True"
+                                       placeholder="Paste from your CRM Assistant dashboard"
+                                       class="w-100"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h2>Connection Test</h2>
+                    <div class="row mt16 o_settings_container"
+                         name="crm_assistant_connector_test">
+                        <div class="col-12 o_setting_box">
+                            <div class="o_setting_right_pane">
+                                <button name="test_crm_assistant_connection"
+                                        type="object" string="Test Connection"
+                                        class="btn btn-primary"/>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
             </xpath>
         </field>
     </record>

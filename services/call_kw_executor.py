@@ -15,12 +15,9 @@ Key guarantees:
 - Step references support list indexing (${step.0.field}) and dict unwrapping
 """
 
-import json
 import logging
 import re
 import time
-
-from datetime import datetime
 
 from odoo.http import request
 from odoo.exceptions import AccessError, ValidationError
