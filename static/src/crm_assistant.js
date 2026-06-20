@@ -1,11 +1,15 @@
-/** @odoo-module **/
+odoo.define("connector.crm_assistant", function (require) {
+    "use strict";
 
-import { registry } from "@web/core/registry";
-import { FloatingWidget } from "./components/chat_widget";
+    const { registry } = require("@web/core/registry");
+    const { FloatingWidget } = require("connector.components.chat_widget");
 
-registry.category("main_components").add(
-    "crm_assistant.FloatingWidget",
-    {
-        Component: FloatingWidget,
-    }
-);
+    registry.category("main_components").add(
+        "crm_assistant.FloatingWidget",
+        {
+            Component: FloatingWidget,
+        }
+    );
+
+    return {};
+});

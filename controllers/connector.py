@@ -87,8 +87,8 @@ def _get_client_id():
         db_uuid = request.env['ir.config_parameter'].sudo().get_param('database.uuid', '')
         if db_uuid:
             return db_uuid[:8]
-    except Exception:
-        pass
+    except Exception as e:
+        _logger.debug("Could not read database UUID for client_id: %s", e)
     return 'default'
 
 

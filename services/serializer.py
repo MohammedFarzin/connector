@@ -11,7 +11,6 @@ Handles all Odoo result types that the call_kw executor may return:
 - Primitive types → passed through
 """
 
-import json as _json
 from datetime import datetime, date
 
 from odoo import models
